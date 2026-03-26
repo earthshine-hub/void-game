@@ -72,7 +72,6 @@ const Audio = {
 
   startMusic(level) {
     if (!Audio.ctx) return;
-    Audio._resume();
     Audio.stopMusic();
     const seqs = {
       1: [130.8,0,196,0,261.6,0,196,0, 164.8,0,220,0,164.8,0,130.8,0],
@@ -82,15 +81,25 @@ const Audio = {
     };
     Audio._musicNotes = seqs[level] || seqs[1];
     Audio._musicBeat = 0;
-    Audio._musicSched = Audio.ctx.currentTime + 0.1;
     Audio._musicGain = Audio.ctx.createGain();
-    Audio._musicGain.gain.value = 0.055;
+    Audio._musicGain.gain.value = 0.1;
     Audio._musicGain.connect(Audio.ctx.destination);
-    Audio._musicTick();
+    // Wait for context to be running before scheduling, so currentTime is accurate
+    const startTick = () => {
+      Audio._musicSched = Audio.ctx.currentTime + 0.05;
+      Audio._musicTick();
+    };
+    if (Audio.ctx.state === 'suspended') {
+      Audio.ctx.resume().then(startTick).catch(startTick);
+    } else {
+      startTick();
+    }
   },
 
   _musicTick() {
     if (!Audio._musicGain || !Audio.ctx) return;
+    // Always stay ahead of currentTime to avoid scheduling in the past
+    Audio._musicSched = Math.max(Audio._musicSched, Audio.ctx.currentTime + 0.05);
     while (Audio._musicSched < Audio.ctx.currentTime + 2.5) {
       const freq = Audio._musicNotes[Audio._musicBeat % Audio._musicNotes.length];
       if (freq > 0) {
