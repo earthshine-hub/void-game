@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Void Assault</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #000;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      overflow: hidden;
+    }
+    #gameCanvas {
+      display: block;
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+    }
+    #loadingScreen {
+      position: absolute;
+      inset: 0;
+      background: #000;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      color: #fff;
+      font-family: 'Courier New', monospace;
+      z-index: 10;
+    }
+    #loadingTitle { font-size: 36px; letter-spacing: 6px; color: #00bfff; margin-bottom: 30px; }
+    #loadingBar { width: 320px; height: 14px; border: 2px solid #00bfff; }
+    #loadingFill { height: 100%; background: #00bfff; width: 0%; transition: width 0.15s; }
+    #loadingText { margin-top: 12px; font-size: 13px; color: #888; }
+  </style>
+</head>
+<body>
+  <canvas id="gameCanvas" width="1280" height="720"></canvas>
+  <div id="loadingScreen">
+    <div id="loadingTitle">VOID ASSAULT</div>
+    <div id="loadingBar"><div id="loadingFill"></div></div>
+    <div id="loadingText">Loading assets...</div>
+  </div>
+
+  <script src="js/loader.js"></script>
+  <script src="js/input.js"></script>
+  <script src="js/audio.js"></script>
+  <script src="js/sprite.js"></script>
+  <script src="js/entities.js"></script>
+  <script src="js/game.js"></script>
+  <script src="js/main.js"></script>
+</body>
+</html>
