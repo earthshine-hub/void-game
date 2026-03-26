@@ -1,6 +1,6 @@
 'use strict';
 
-const MILESTONE = 2, BUILD = 1;
+const MILESTONE = 2, BUILD = 2;
 const VERSION_STR = 'MILESTONE ' + MILESTONE + '.' + BUILD;
 
 // ─── BACKGROUND ───────────────────────────────────────────────────────────────
@@ -266,7 +266,7 @@ const GameScene = {
             this.score += e.pts;
             this.explosions.push(makeExplosion(e.cx, e.cy, 70, this.anims.explode));
             spawnParticles(e.cx, e.cy, 14, ['#ff8800','#ffcc00','#ff4400'], this.particles);
-            this._tryDropPowerup(e.cx, e.cy, 0.13);
+            this._tryDropPowerup(e.cx, e.cy, 0.30);
             Audio.explosion();
           }
           break;
@@ -280,7 +280,7 @@ const GameScene = {
               this.score += t.pts;
               this.explosions.push(makeExplosion(t.cx, t.cy, 60, this.anims.explode));
               spawnParticles(t.cx, t.cy, 12, ['#88bb44','#ffcc00','#ffffff'], this.particles);
-              this._tryDropPowerup(t.cx, t.cy, 0.28);
+              this._tryDropPowerup(t.cx, t.cy, 0.50);
               Audio.explosion();
             }
             break;
@@ -524,8 +524,8 @@ const StartScene = {
     ctx.textAlign = 'center'; ctx.shadowColor = '#00bfff'; ctx.shadowBlur = 30;
     ctx.fillText('VOID ASSAULT', CW / 2, CH / 2 - 60); ctx.restore();
 
-    ctx.fillStyle = '#334455'; ctx.font = '14px "Courier New"'; ctx.textAlign = 'center';
-    ctx.fillText(VERSION_STR, CW / 2, CH / 2 - 22);
+    ctx.fillStyle = '#7799aa'; ctx.font = '13px "Courier New"'; ctx.textAlign = 'center';
+    ctx.fillText(VERSION_STR, CW / 2, CH / 2 - 24);
     ctx.fillStyle = '#fff'; ctx.font = '22px "Courier New"';
     ctx.fillText('PRESS  SPACE  TO  BEGIN', CW / 2, CH / 2 + 20);
     const hs = parseInt(localStorage.getItem('voidassault_hi') || '0');
