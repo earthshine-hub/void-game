@@ -1,5 +1,8 @@
 'use strict';
 
+const MILESTONE = 2, BUILD = 1;
+const VERSION_STR = 'MILESTONE ' + MILESTONE + '.' + BUILD;
+
 // ─── BACKGROUND ───────────────────────────────────────────────────────────────
 const BG_CONFIGS = {
   1: { keys: ['bg_back', 'bg_stars', 'bg_planet'], speeds: [18, 35, 8],  base: '#04060f' },
@@ -245,7 +248,7 @@ const GameScene = {
     const bh = b.hitbox(), th = target.hitbox ? target.hitbox() : null;
     if (!th) return false;
     if (aabb(bh.x, bh.y, bh.w, bh.h, th.x, th.y, th.w, th.h)) {
-      b.dead = true; return true;
+      b.dead = true; target.takeDamage(b.dmg); return true;
     }
     return false;
   },
@@ -521,7 +524,9 @@ const StartScene = {
     ctx.textAlign = 'center'; ctx.shadowColor = '#00bfff'; ctx.shadowBlur = 30;
     ctx.fillText('VOID ASSAULT', CW / 2, CH / 2 - 60); ctx.restore();
 
-    ctx.fillStyle = '#fff'; ctx.font = '22px "Courier New"'; ctx.textAlign = 'center';
+    ctx.fillStyle = '#334455'; ctx.font = '14px "Courier New"'; ctx.textAlign = 'center';
+    ctx.fillText(VERSION_STR, CW / 2, CH / 2 - 22);
+    ctx.fillStyle = '#fff'; ctx.font = '22px "Courier New"';
     ctx.fillText('PRESS  SPACE  TO  BEGIN', CW / 2, CH / 2 + 20);
     const hs = parseInt(localStorage.getItem('voidassault_hi') || '0');
     ctx.fillStyle = '#778899'; ctx.font = '16px "Courier New"';
