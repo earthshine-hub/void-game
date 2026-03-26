@@ -12,6 +12,7 @@ const LEVEL_SCALE = {
   1: { spdMult: 1.0,  rateMult: 1.0,  bspdMult: 1.0,  dmgMult: 1.0  },
   2: { spdMult: 1.2,  rateMult: 0.82, bspdMult: 1.15, dmgMult: 1.1  },
   3: { spdMult: 1.45, rateMult: 0.68, bspdMult: 1.3,  dmgMult: 1.25 },
+  4: { spdMult: 1.6,  rateMult: 0.60, bspdMult: 1.4,  dmgMult: 1.4  },
 };
 
 // ─── PLAYER ───────────────────────────────────────────────────────────────────
@@ -35,6 +36,7 @@ class Player {
     this.speedTimer  = 0;
     this.shieldActive = false;
     this.shieldPulse  = 0;
+    this.damageTaken  = 0;   // per-level stat tracking
   }
 
   get speed() { return this.baseSpeed * (this.speedTimer > 0 ? 1.4 : 1.0); }
@@ -107,6 +109,7 @@ class Player {
       Audio.hit();
       return;
     }
+    this.damageTaken += amount;
     this.hp = Math.max(0, this.hp - amount);
     this.invTimer = 1.8;
     Audio.hit();
@@ -671,6 +674,202 @@ class TwinBoss {
       x: s.cx - this.hw, y: s.cy - this.hh, w: this.hw * 2, h: this.hh * 2
     }));
   }
+}
+
+// ─── FINAL BOSS (Level 4 — Mothership Command) ───────────────────────────────
+class FinalBoss {
+  constructor(anim) {
+    this.name = 'MOTHERSHIP';
+    this.cx = CW + 320; this.cy = CH / 2;
+    this.w = 240; this.h = 240; this.hw = 100; this.hh = 100;
+    this.hp = 1400; this.maxHp = 1400; this.pts = 5000;
+    this.dead = false; this.entering = true; this.targetX = CW - 310;
+    this.phase = 1; this.t = 0; this.flashTimer = 0; this.anim = anim;
+    this.defeatTimer = -1;
+    this.phaseChanged = false;
+    this.pendingSpawns = [];     // GameScene pulls from this each frame
+
+    // Phase 1: spread fire + drone summons
+    this.spreadTimer = 2.5;
+    this.droneTimer  = 7;
+
+    // Phase 2+: laser sweep
+    this.laserSweepActive = false;
+    this.laserSweepY      = CH / 2;
+    this.laserSweepDir    = 1;
+    this.laserSweepTimer  = 5;
+
+    // Phase 2+: missile salvo
+    this.missileTimer = 3.5;
+
+    // Phase 3: horizontal drift
+    this.vx = 0; this.moveTimer = 3;
+  }
+
+  update(dt, py, enemyBullets, onDefeated) {
+    if (this.defeatTimer >= 0) { this.defeatTimer -= dt; if (this.defeatTimer <= 0) onDefeated(); return; }
+    this.t += dt;
+
+    if (this.entering) {
+      this.cx -= 200 * dt;
+      if (this.cx <= this.targetX) { this.cx = this.targetX; this.entering = false; Audio.bossAlert(); }
+      return;
+    }
+
+    const newPhase = this.hp > this.maxHp * 0.66 ? 1 : this.hp > this.maxHp * 0.33 ? 2 : 3;
+    if (newPhase !== this.phase) { this.phase = newPhase; this.phaseChanged = true; }
+
+    // Phase 3: drift horizontally
+    if (this.phase === 3) {
+      this.cx += this.vx * dt;
+      this.moveTimer -= dt;
+      if (this.moveTimer <= 0) {
+        this.moveTimer = 2.5 + Math.random() * 1.5;
+        this.vx = (Math.random() < 0.5 ? -1 : 1) * (80 + Math.random() * 60);
+      }
+      this.cx = clamp(this.cx, CW * 0.62, CW - this.w / 2 - 10);
+    }
+
+    // Spread fire (all phases)
+    this.spreadTimer -= dt;
+    if (this.spreadTimer <= 0) {
+      this.spreadTimer = this.phase === 3 ? 1.2 : this.phase === 2 ? 1.8 : 2.5;
+      this._fireSpread(enemyBullets);
+    }
+
+    // Drone summons (all phases)
+    this.droneTimer -= dt;
+    if (this.droneTimer <= 0) {
+      this.droneTimer = this.phase >= 2 ? 5 : 7;
+      this._spawnDrones();
+    }
+
+    // Phase 2+: laser sweep
+    if (this.phase >= 2) {
+      if (this.laserSweepActive) {
+        this.laserSweepY += this.laserSweepDir * 290 * dt;
+        if (this.laserSweepY > CH - 55) this.laserSweepDir = -1;
+        if (this.laserSweepY < 55)      { this.laserSweepActive = false; this.laserSweepTimer = this.phase === 3 ? 2.5 : 4.5; }
+      } else {
+        this.laserSweepTimer -= dt;
+        if (this.laserSweepTimer <= 0)  { this.laserSweepActive = true; this.laserSweepY = 55; this.laserSweepDir = 1; }
+      }
+    }
+
+    // Phase 2+: missile salvo
+    if (this.phase >= 2) {
+      this.missileTimer -= dt;
+      if (this.missileTimer <= 0) {
+        this.missileTimer = this.phase === 3 ? 2.0 : 3.5;
+        for (let i = 0; i < 6; i++) {
+          const angle = Math.atan2(py - this.cy, 0 - this.cx) + (i - 2.5) * 0.22;
+          const spd = this.phase === 3 ? 390 : 340;
+          enemyBullets.push(new Bullet(this.cx - this.hw, this.cy,
+            Math.cos(angle) * spd, Math.sin(angle) * spd, 26, false, 'boss'));
+        }
+      }
+    }
+
+    if (this.flashTimer > 0) this.flashTimer -= dt;
+    if (this.anim) this.anim.update(dt);
+  }
+
+  _fireSpread(bullets) {
+    const count = this.phase === 3 ? 7 : this.phase === 2 ? 5 : 4;
+    const spread = Math.PI * 0.35;
+    for (let i = 0; i < count; i++) {
+      const frac = count === 1 ? 0 : (i / (count - 1) - 0.5);
+      const angle = Math.PI + frac * spread;
+      const spd = this.phase === 3 ? 340 : this.phase === 2 ? 300 : 260;
+      bullets.push(new Bullet(this.cx - this.hw, this.cy,
+        Math.cos(angle) * spd, Math.sin(angle) * spd, 28, false, 'boss'));
+    }
+  }
+
+  _spawnDrones() {
+    for (let i = 0; i < 3; i++) {
+      this.pendingSpawns.push({
+        type: 'small',
+        cx: this.cx - 100 + (Math.random() - 0.5) * 120,
+        cy: this.cy + (i - 1) * 100 + (Math.random() - 0.5) * 50,
+        pattern: 'dive',
+      });
+    }
+  }
+
+  takeDamage(dmg) {
+    if (this.dead || this.defeatTimer >= 0) return;
+    this.hp -= dmg; this.flashTimer = 0.08;
+    if (this.hp <= 0) { this.hp = 0; this.dead = true; this.defeatTimer = 4.0; Audio.bigExplosion(); }
+  }
+
+  draw(ctx) {
+    // Laser sweep (drawn before flash filter, so it's unaffected)
+    if (this.laserSweepActive) {
+      ctx.save();
+      ctx.strokeStyle = '#ff3300'; ctx.lineWidth = 4 + Math.random() * 3;
+      ctx.shadowColor = '#ff3300'; ctx.shadowBlur = 30;
+      ctx.beginPath(); ctx.moveTo(0, this.laserSweepY); ctx.lineTo(this.cx - this.hw, this.laserSweepY); ctx.stroke();
+      ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1.5; ctx.shadowBlur = 0;
+      ctx.beginPath(); ctx.moveTo(0, this.laserSweepY); ctx.lineTo(this.cx - this.hw, this.laserSweepY); ctx.stroke();
+      ctx.restore();
+    }
+
+    if (this.flashTimer > 0) { ctx.save(); ctx.filter = 'brightness(4)'; }
+    if (this.anim && this.anim.frames.length > 0) {
+      ctx.save();
+      ctx.translate(this.cx, this.cy); ctx.rotate(-Math.PI / 2);
+      // Phase tint overlay
+      if (this.phase >= 2) {
+        ctx.save(); ctx.globalAlpha = this.phase === 3 ? 0.45 + 0.15 * Math.sin(this.t * 6) : 0.25;
+        ctx.fillStyle = this.phase === 3 ? '#ff2200' : '#ff8800';
+        ctx.fillRect(-this.w / 2, -this.h / 2, this.w, this.h);
+        ctx.restore();
+      }
+      this.anim.draw(ctx, -this.w / 2, -this.h / 2, this.w, this.h, false);
+      ctx.restore();
+    } else {
+      const x = this.cx - this.w / 2, y = this.cy - this.h / 2;
+      ctx.fillStyle = '#220011'; ctx.fillRect(x, y, this.w, this.h);
+      ctx.fillStyle = '#440022'; ctx.fillRect(x + 20, y + 20, this.w - 40, this.h - 40);
+      ctx.fillStyle = this.phase === 3 ? '#ff2200' : this.phase === 2 ? '#ff6600' : '#cc0088';
+      ctx.beginPath(); ctx.arc(this.cx, this.cy, 40, 0, Math.PI * 2); ctx.fill();
+    }
+    if (this.flashTimer > 0) ctx.restore();
+
+    // Defeat explosion FX
+    if (this.defeatTimer >= 0) {
+      ctx.save(); ctx.globalAlpha = clamp(this.defeatTimer / 0.8, 0, 1);
+      for (let i = 0; i < 4; i++) {
+        ctx.fillStyle = Math.random() > 0.5 ? '#ff6600' : '#ffcc00';
+        ctx.beginPath();
+        ctx.arc(this.cx + (Math.random() - 0.5) * this.w * 1.3,
+                this.cy + (Math.random() - 0.5) * this.h * 1.3,
+                20 + Math.random() * 55, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.restore();
+    }
+  }
+
+  drawHPBar(ctx) {
+    const bw = 700, bh = 20, bx = CW / 2 - bw / 2, by = 10;
+    ctx.fillStyle = '#1a0011'; ctx.fillRect(bx, by, bw, bh);
+    const ratio = this.hp / this.maxHp;
+    ctx.fillStyle = this.phase === 3 ? '#ff2200' : this.phase === 2 ? '#ff6600' : '#cc0088';
+    ctx.fillRect(bx, by, bw * ratio, bh);
+    ctx.strokeStyle = '#ff44aa'; ctx.lineWidth = 2; ctx.strokeRect(bx, by, bw, bh);
+    // Phase threshold marks
+    [0.33, 0.66].forEach(f => {
+      ctx.fillStyle = '#aaa'; ctx.fillRect(bx + bw * f - 1, by, 2, bh);
+    });
+    const phaseLabel = this.phase === 3 ? '!! PHASE III — ENRAGED !!' : 'PHASE ' + ['I','II','III'][this.phase - 1];
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 13px "Courier New"'; ctx.textAlign = 'center';
+    ctx.fillText(this.name + '  ' + phaseLabel, CW / 2, by + bh + 17);
+    ctx.textAlign = 'left';
+  }
+
+  hitbox() { return { x: this.cx - this.hw, y: this.cy - this.hh, w: this.hw * 2, h: this.hh * 2 }; }
 }
 
 // ─── POWER-UP ─────────────────────────────────────────────────────────────────

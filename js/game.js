@@ -1,6 +1,6 @@
 'use strict';
 
-const MILESTONE = 2, BUILD = 2;
+const MILESTONE = 3, BUILD = 0;
 const VERSION_STR = 'MILESTONE ' + MILESTONE + '.' + BUILD;
 
 // ─── BACKGROUND ───────────────────────────────────────────────────────────────
@@ -8,7 +8,10 @@ const BG_CONFIGS = {
   1: { keys: ['bg_back', 'bg_stars', 'bg_planet'], speeds: [18, 35, 8],  base: '#04060f' },
   2: { keys: ['bg_asteroid', 'bg_planet2'],         speeds: [30, 8],      base: '#020510' },
   3: { keys: ['bg_corridor_back', 'bg_corridor'],   speeds: [20, 55],     base: '#080512' },
+  4: { keys: ['bg_corridor_back', 'bg_corridor'],   speeds: [10, 22],     base: '#100008' },
 };
+
+const LEVEL_NAMES = { 1: 'OPEN VOID', 2: 'DEBRIS FIELD', 3: 'MOTHERSHIP INTERIOR', 4: 'COMMAND BRIDGE' };
 
 class Background {
   constructor(levelNum) {
@@ -75,6 +78,13 @@ function makeWaves(levelNum) {
     [...col('medium', 4, H / 2, 120), ...col('turret', 3, H * 0.76, 0, () => 'straight').map((e, i) => ({ ...e, cx: base + i * 120 }))],
     // L2 W5 — dense mixed
     [...col('medium', 3, H / 2, 130), ...col('small', 6, H / 2, 80, () => 'sine')],
+    [{ type: '__boss__' }],
+  ];
+
+  if (levelNum === 4) return [
+    // Brief warm-up before final boss
+    col('small', 6, H / 2, 70, () => 'dive'),
+    [...col('medium', 3, H / 2, 120), ...col('small', 5, H / 2, 65, () => 'sine')],
     [{ type: '__boss__' }],
   ];
 
@@ -157,7 +167,13 @@ const GameScene = {
   // Level-specific
   asteroidTimer: 0,
   corridorWalls: false,
-  corridorTop: 55, corridorBot: 665,   // player Y constraints for Level 3
+  corridorTop: 55, corridorBot: 665,
+  // Screen shake
+  shakeTimer: 0, shakeAmt: 0,
+  // Phase transition callout
+  phaseText: '', phaseTextTimer: 0,
+  // Per-level stats
+  kills: 0, shotsFired: 0, shotsHit: 0,
 
   init(levelNum) {
     this.levelNum = levelNum || 1;
@@ -171,7 +187,10 @@ const GameScene = {
     this.explosions = []; this.particles = [];
     this.boss = null;
     this.asteroidTimer = 2;
-    this.corridorWalls = (this.levelNum === 3);
+    this.corridorWalls = (this.levelNum >= 3);
+    this.shakeTimer = 0; this.shakeAmt = 0;
+    this.phaseText = ''; this.phaseTextTimer = 0;
+    this.kills = 0; this.shotsFired = 0; this.shotsHit = 0;
 
     // Build/reuse animations
     const A = this.anims;
@@ -196,12 +215,15 @@ const GameScene = {
 
     // Wire global particle array so Player.takeDamage shield pops work
     _globalParticles = this.particles;
+    // Reset per-level damage stat and start music
+    if (this.player) this.player.damageTaken = 0;
+    Audio.startMusic(this.levelNum);
     return this;
   },
 
   _animForType(type) {
     const A = this.anims;
-    if (type === 'small')  return this.levelNum === 3 ? A.alienWlk.clone() : A.alien.clone();
+    if (type === 'small')  return this.levelNum >= 3 ? A.alienWlk.clone() : A.alien.clone();
     if (type === 'medium') return A.enemyMed.clone();
     if (type === 'turret') return A.mech.clone();
     return A.alien.clone();
@@ -213,7 +235,8 @@ const GameScene = {
       const A = this.anims;
       if (this.levelNum === 1) this.boss = new Boss(A.boss1.clone());
       else if (this.levelNum === 2) this.boss = new MechBoss(A.mech.clone());
-      else this.boss = new TwinBoss(A.alien.clone(), A.alien.clone());
+      else if (this.levelNum === 3) this.boss = new TwinBoss(A.alien.clone(), A.alien.clone());
+      else this.boss = new FinalBoss(A.boss1.clone());
       this.bossActive = true; this.allWavesDone = true;
       return;
     }
@@ -248,12 +271,12 @@ const GameScene = {
     const bh = b.hitbox(), th = target.hitbox ? target.hitbox() : null;
     if (!th) return false;
     if (aabb(bh.x, bh.y, bh.w, bh.h, th.x, th.y, th.w, th.h)) {
-      b.dead = true; target.takeDamage(b.dmg); return true;
+      b.dead = true; target.takeDamage(b.dmg); this.shotsHit++; return true;
     }
     return false;
   },
 
-  _collide() {
+  _collide(dt) {
     const p = this.player, ph = p.hitbox();
 
     // Player bullets → enemies
@@ -263,10 +286,12 @@ const GameScene = {
         if (this._collideBulletVsTarget(b, e)) {
           const died = e.dead;
           if (died) {
+            this.kills++;
             this.score += e.pts;
             this.explosions.push(makeExplosion(e.cx, e.cy, 70, this.anims.explode));
             spawnParticles(e.cx, e.cy, 14, ['#ff8800','#ffcc00','#ff4400'], this.particles);
             this._tryDropPowerup(e.cx, e.cy, 0.30);
+            this.shakeAmt = Math.max(this.shakeAmt, 5); this.shakeTimer = Math.max(this.shakeTimer, 0.15);
             Audio.explosion();
           }
           break;
@@ -277,10 +302,12 @@ const GameScene = {
         for (const t of this.turrets) {
           if (this._collideBulletVsTarget(b, t)) {
             if (t.dead) {
+              this.kills++;
               this.score += t.pts;
               this.explosions.push(makeExplosion(t.cx, t.cy, 60, this.anims.explode));
               spawnParticles(t.cx, t.cy, 12, ['#88bb44','#ffcc00','#ffffff'], this.particles);
               this._tryDropPowerup(t.cx, t.cy, 0.50);
+              this.shakeAmt = Math.max(this.shakeAmt, 5); this.shakeTimer = Math.max(this.shakeTimer, 0.15);
               Audio.explosion();
             }
             break;
@@ -299,28 +326,38 @@ const GameScene = {
           const bosh = this.boss.hitbox();
           hit = aabb(bh2.x, bh2.y, bh2.w, bh2.h, bosh.x, bosh.y, bosh.w, bosh.h);
         }
-        if (hit) { b.dead = true; this.boss.takeDamage(b.dmg); }
+        if (hit) { b.dead = true; this.boss.takeDamage(b.dmg); this.shotsHit++; this.shakeAmt = Math.max(this.shakeAmt, 4); this.shakeTimer = Math.max(this.shakeTimer, 0.1); }
       }
     }
 
     // Laser → enemies + boss (DPS)
-    if (p.laserActive && Input.held('Space')) {
+    if (p.laserActive) {
       const ly = p.cy, lx = p.cx + p.w / 2;
       const dps = 80;
       for (const e of this.enemies) {
-        if (!e.dead && Math.abs(e.cy - ly) < e.hh && e.cx > lx) {
+        if (!e.dead && Math.abs(e.cy - ly) < e.hh * 2 && e.cx > lx) {
           const wasDead = e.dead;
-          e.takeDamage(dps * 0.016);   // per-frame approx (assume ~60fps cap)
+          e.takeDamage(dps * dt);
           if (!wasDead && e.dead) {
+            this.kills++;
             this.score += e.pts;
             this.explosions.push(makeExplosion(e.cx, e.cy, 70, this.anims.explode));
             spawnParticles(e.cx, e.cy, 14, ['#00ff88','#ffffff','#00ffcc'], this.particles);
             this._tryDropPowerup(e.cx, e.cy, 0.13);
+            this.shakeAmt = Math.max(this.shakeAmt, 5); this.shakeTimer = Math.max(this.shakeTimer, 0.15);
             Audio.explosion();
           }
         }
       }
-      if (this.boss && !this.boss.dead) this.boss.takeDamage(dps * 0.016);
+      if (this.boss && !this.boss.dead) this.boss.takeDamage(dps * dt);
+    }
+
+    // FinalBoss laser sweep → player
+    if (this.boss && !this.boss.dead && this.boss.laserSweepActive) {
+      if (Math.abs(p.cy - this.boss.laserSweepY) < 22) {
+        p.takeDamage(50 * dt);
+        spawnParticles(p.cx, p.cy, 4, ['#ff3300','#ff9900','#ffffff'], this.particles);
+      }
     }
 
     // Enemy bullets → player
@@ -374,7 +411,15 @@ const GameScene = {
     const yMax = this.corridorWalls ? this.corridorBot  : undefined;
 
     this.bg.update(dt);
+    // Track shots fired this frame
+    const _sfBefore = this.playerBullets.length;
     this.player.update(dt, this.playerBullets, yMin, yMax);
+    this.shotsFired += this.playerBullets.length - _sfBefore;
+
+    // Shake decay
+    if (this.shakeTimer > 0) { this.shakeTimer -= dt; this.shakeAmt *= Math.pow(0.01, dt); }
+    // Phase text fade
+    if (this.phaseTextTimer > 0) this.phaseTextTimer -= dt;
 
     // Wave / boss spawning
     if (!this.bossActive) {
@@ -397,9 +442,26 @@ const GameScene = {
     // Boss
     if (this.boss) {
       this.boss.update(dt, this.player.cy, this.enemyBullets, () => {
+        this.kills++;
         this.score += this.boss.pts || 1000;
         SceneManager.set(LevelClearScene.init(this.score, this.levelNum));
       });
+      // FinalBoss: pull pending drone spawns
+      if (this.boss.pendingSpawns && this.boss.pendingSpawns.length > 0) {
+        const sc = LEVEL_SCALE[this.levelNum];
+        for (const d of this.boss.pendingSpawns) {
+          const anim = this._animForType(d.type);
+          this.enemies.push(new Enemy(d.type, d.cx, d.cy, d.pattern, anim, sc));
+        }
+        this.boss.pendingSpawns.length = 0;
+      }
+      // Phase transition
+      if (this.boss.phaseChanged) {
+        this.boss.phaseChanged = false;
+        this.phaseText = 'PHASE ' + ['I','II','III'][this.boss.phase - 1];
+        this.phaseTextTimer = 3.0;
+        this.shakeAmt = Math.max(this.shakeAmt, 20); this.shakeTimer = Math.max(this.shakeTimer, 0.7);
+      }
     }
 
     // Asteroids (Level 2 only)
@@ -431,12 +493,21 @@ const GameScene = {
     this.explosions = this.explosions.filter(e => !e.done);
     this.particles  = this.particles.filter(p => !p.dead);
 
-    this._collide();
+    this._collide(dt);
 
     if (this.player.dead) SceneManager.set(GameOverScene.init(this.score));
   },
 
   render(ctx) {
+    // Screen shake — applied to game world, not HUD
+    let _didShake = false;
+    if (this.shakeTimer > 0) {
+      const sx = (Math.random() - 0.5) * this.shakeAmt * 2;
+      const sy = (Math.random() - 0.5) * this.shakeAmt * 2;
+      ctx.save(); ctx.translate(sx, sy);
+      _didShake = true;
+    }
+
     this.bg.draw(ctx);
 
     // Asteroids behind everything else
@@ -453,14 +524,13 @@ const GameScene = {
     for (const b of this.enemyBullets)  b.draw(ctx, null);
     for (const b of this.playerBullets) b.draw(ctx, this.anims.bolt);
 
-    // Laser beam
-    if (this.player.laserActive && Input.held('Space')) {
+    // Player laser beam
+    if (this.player.laserActive) {
       const lx = this.player.cx + this.player.w / 2, ly = this.player.cy;
       ctx.save();
       ctx.strokeStyle = '#00ff88'; ctx.lineWidth = 3 + Math.random() * 2;
       ctx.shadowColor = '#00ff88'; ctx.shadowBlur = 30;
       ctx.beginPath(); ctx.moveTo(lx, ly); ctx.lineTo(CW + 10, ly); ctx.stroke();
-      // Inner bright core
       ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1.5; ctx.shadowBlur = 0;
       ctx.beginPath(); ctx.moveTo(lx, ly); ctx.lineTo(CW + 10, ly); ctx.stroke();
       ctx.restore();
@@ -468,19 +538,22 @@ const GameScene = {
 
     this.player.draw(ctx);
 
-    // Corridor wall overlays (Level 3)
+    // Corridor wall overlays (Levels 3+)
     if (this.corridorWalls) {
-      ctx.fillStyle = '#0d0a18';
+      ctx.fillStyle = this.levelNum >= 4 ? '#160008' : '#0d0a18';
       ctx.fillRect(0, 0, CW, this.corridorTop);
       ctx.fillRect(0, this.corridorBot, CW, CH - this.corridorBot);
-      // Neon edge lines
-      ctx.strokeStyle = '#8844ff'; ctx.lineWidth = 2;
-      ctx.shadowColor = '#8844ff'; ctx.shadowBlur = 12;
+      const edgeColor = this.levelNum >= 4 ? '#ff2266' : '#8844ff';
+      ctx.strokeStyle = edgeColor; ctx.lineWidth = 2;
+      ctx.shadowColor = edgeColor; ctx.shadowBlur = 12;
       ctx.beginPath(); ctx.moveTo(0, this.corridorTop); ctx.lineTo(CW, this.corridorTop); ctx.stroke();
       ctx.beginPath(); ctx.moveTo(0, this.corridorBot); ctx.lineTo(CW, this.corridorBot); ctx.stroke();
       ctx.shadowBlur = 0;
     }
 
+    if (_didShake) { ctx.restore(); _didShake = false; }
+
+    // HUD (shake-stable)
     drawHUD(ctx, this.player, this.score, this.waveIndex, this.levelNum, this.bossActive);
     if (this.boss && !this.boss.dead) this.boss.drawHPBar(ctx);
 
@@ -493,6 +566,53 @@ const GameScene = {
       ctx.fillText(isBoss ? '!! BOSS INCOMING !!' : 'WAVE ' + (this.waveIndex + 1), CW / 2, CH / 2);
       ctx.restore(); ctx.textAlign = 'left';
     }
+
+    // Phase transition callout
+    if (this.phaseTextTimer > 0) {
+      const alpha = clamp(Math.min(this.phaseTextTimer * 1.5, (3.0 - this.phaseTextTimer) * 2), 0, 1);
+      ctx.save(); ctx.globalAlpha = alpha;
+      ctx.fillStyle = '#ff4400'; ctx.font = 'bold 54px "Courier New"'; ctx.textAlign = 'center';
+      ctx.shadowColor = '#ff4400'; ctx.shadowBlur = 30;
+      ctx.fillText('!! ' + this.phaseText + ' !!', CW / 2, CH / 2 + 40);
+      ctx.restore(); ctx.textAlign = 'left'; ctx.shadowBlur = 0;
+    }
+  },
+};
+
+// ─── LEVEL INTRO SCENE ────────────────────────────────────────────────────────
+const LevelIntroScene = {
+  levelNum: 1, t: 0, bg: null,
+
+  init(levelNum) {
+    this.levelNum = levelNum; this.t = 0;
+    this.bg = new Background(levelNum);
+    return this;
+  },
+
+  update(dt) {
+    this.t += dt;
+    if (this.bg) this.bg.update(dt);
+    if (this.t > 2.7) {
+      GameScene.init(this.levelNum);
+      SceneManager.set(GameScene);
+    }
+  },
+
+  render(ctx) {
+    if (this.bg) this.bg.draw(ctx);
+    else { ctx.fillStyle = '#04060f'; ctx.fillRect(0, 0, CW, CH); }
+    const fade = clamp(Math.min(this.t * 2.5, (2.7 - this.t) * 3), 0, 1);
+    ctx.save();
+    ctx.globalAlpha = 0.65 * fade;
+    ctx.fillStyle = '#000011'; ctx.fillRect(0, 0, CW, CH);
+    ctx.restore();
+    ctx.save(); ctx.globalAlpha = fade;
+    ctx.fillStyle = '#446688'; ctx.font = '22px "Courier New"'; ctx.textAlign = 'center';
+    ctx.fillText('SECTOR ' + this.levelNum, CW / 2, CH / 2 - 48);
+    ctx.fillStyle = '#00bfff'; ctx.font = 'bold 64px "Courier New"';
+    ctx.shadowColor = '#00bfff'; ctx.shadowBlur = 24;
+    ctx.fillText(LEVEL_NAMES[this.levelNum] || '', CW / 2, CH / 2 + 22);
+    ctx.restore(); ctx.textAlign = 'left'; ctx.shadowBlur = 0;
   },
 };
 
@@ -502,6 +622,7 @@ const StartScene = {
 
   init() {
     this.bg = new Background(1); this.t = 0;
+    Audio.stopMusic();
     return this;
   },
 
@@ -511,8 +632,7 @@ const StartScene = {
       GameScene.score = 0;
       GameScene.player = null;   // fresh player each new game
       GameScene.anims = {};
-      GameScene.init(1);
-      SceneManager.set(GameScene);
+      SceneManager.set(LevelIntroScene.init(1));
     }
   },
 
@@ -557,6 +677,7 @@ const GameOverScene = {
 
   init(score) {
     this.score = score; this.t = 0;
+    Audio.stopMusic();
     const hi = parseInt(localStorage.getItem('voidassault_hi') || '0');
     if (score > hi) localStorage.setItem('voidassault_hi', score);
     return this;
@@ -587,9 +708,17 @@ const GameOverScene = {
 // ─── LEVEL CLEAR SCENE ────────────────────────────────────────────────────────
 const LevelClearScene = {
   score: 0, levelNum: 1, t: 0,
+  kills: 0, shotsFired: 0, shotsHit: 0, damageTaken: 0, perfectBonus: 0,
 
   init(score, levelNum) {
     this.score = score; this.levelNum = levelNum; this.t = 0;
+    this.kills      = GameScene.kills;
+    this.shotsFired = GameScene.shotsFired;
+    this.shotsHit   = GameScene.shotsHit;
+    this.damageTaken = GameScene.player ? Math.round(GameScene.player.damageTaken) : 0;
+    this.perfectBonus = this.damageTaken === 0 ? 500 : 0;
+    if (this.perfectBonus > 0) { GameScene.score += this.perfectBonus; this.score = GameScene.score; }
+    Audio.stopMusic();
     Audio.levelClear();
     return this;
   },
@@ -597,31 +726,104 @@ const LevelClearScene = {
   update(dt) {
     this.t += dt;
     if (this.t > 2.0 && (Input.pressed('Space') || Input.pressed('Enter'))) {
-      if (this.levelNum < 3) {
-        // Carry player and score into next level
-        GameScene.init(this.levelNum + 1);
-        SceneManager.set(GameScene);
+      if (this.levelNum < 4) {
+        SceneManager.set(LevelIntroScene.init(this.levelNum + 1));
       } else {
-        SceneManager.set(StartScene.init());
+        SceneManager.set(CreditsScene.init());
       }
     }
   },
 
   render(ctx) {
     if (GameScene.bg) GameScene.bg.draw(ctx); else { ctx.fillStyle = '#04060f'; ctx.fillRect(0, 0, CW, CH); }
-    ctx.save(); ctx.fillStyle = 'rgba(0,0,20,0.65)'; ctx.fillRect(0, 0, CW, CH);
-    const isLast = this.levelNum >= 3;
-    ctx.fillStyle = '#00ff88'; ctx.font = 'bold 70px "Courier New"'; ctx.textAlign = 'center';
+    ctx.save();
+    ctx.fillStyle = 'rgba(0,0,20,0.7)'; ctx.fillRect(0, 0, CW, CH);
+
+    const isLast = this.levelNum >= 4;
+    ctx.fillStyle = '#00ff88'; ctx.font = 'bold 58px "Courier New"'; ctx.textAlign = 'center';
     ctx.shadowColor = '#00ff88'; ctx.shadowBlur = 28;
-    ctx.fillText(isLast ? 'ALL SECTORS CLEARED' : 'SECTOR ' + this.levelNum + ' CLEARED', CW / 2, CH / 2 - 65);
+    ctx.fillText(isLast ? 'MOTHERSHIP DOWN' : 'SECTOR ' + this.levelNum + ' CLEARED', CW / 2, 118);
     ctx.shadowBlur = 0; ctx.fillStyle = '#fff'; ctx.font = '26px "Courier New"';
-    ctx.fillText('SCORE   ' + String(this.score).padStart(8, '0'), CW / 2, CH / 2 + 10);
+    ctx.fillText('SCORE   ' + String(this.score).padStart(8, '0'), CW / 2, 182);
+
+    // Score breakdown
+    const acc = this.shotsFired > 0 ? Math.round(this.shotsHit / this.shotsFired * 100) : 0;
+    const bx = CW / 2 - 165;
+    ctx.fillStyle = '#335566'; ctx.fillRect(bx - 10, 202, 330, 2);
+    const rows = [
+      ['KILLS',         String(this.kills),          '#cce0ee'],
+      ['ACCURACY',      acc + '%',                   '#cce0ee'],
+      ['DAMAGE TAKEN',  String(this.damageTaken),     '#cce0ee'],
+      ['PERFECT BONUS', this.perfectBonus > 0 ? '+' + this.perfectBonus : '---',
+                        this.perfectBonus > 0 ? '#00ff88' : '#556677'],
+    ];
+    rows.forEach(([label, val, color], i) => {
+      ctx.font = '16px "Courier New"'; ctx.fillStyle = '#7799aa'; ctx.textAlign = 'left';
+      ctx.fillText(label, bx, 236 + i * 30);
+      ctx.textAlign = 'right'; ctx.fillStyle = color;
+      ctx.fillText(val, bx + 330, 236 + i * 30);
+    });
+    ctx.fillStyle = '#335566'; ctx.fillRect(bx - 10, 236 + rows.length * 30 - 4, 330, 2);
+
     if (this.t > 2.0) {
-      ctx.fillStyle = '#aabbcc'; ctx.font = '16px "Courier New"';
-      const msg = isLast ? 'PRESS SPACE TO RETURN TO TITLE' : 'PRESS SPACE TO ADVANCE TO LEVEL ' + (this.levelNum + 1);
-      ctx.fillText(msg, CW / 2, CH / 2 + 75);
+      ctx.fillStyle = '#aabbcc'; ctx.font = '16px "Courier New"'; ctx.textAlign = 'center';
+      const msg = isLast ? 'PRESS SPACE TO SEE CREDITS'
+                         : 'PRESS SPACE TO ADVANCE TO SECTOR ' + (this.levelNum + 1);
+      ctx.fillText(msg, CW / 2, CH - 36);
     }
     ctx.textAlign = 'left'; ctx.restore();
+  },
+};
+
+// ─── CREDITS SCENE ────────────────────────────────────────────────────────────
+const CreditsScene = {
+  t: 0, bg: null,
+
+  init() {
+    this.t = 0;
+    this.bg = new Background(1);
+    const hi = parseInt(localStorage.getItem('voidassault_hi') || '0');
+    if (GameScene.score > hi) localStorage.setItem('voidassault_hi', GameScene.score);
+    return this;
+  },
+
+  update(dt) {
+    this.t += dt;
+    if (this.bg) this.bg.update(dt);
+    if (this.t > 2 && (Input.pressed('Space') || Input.pressed('Enter')))
+      SceneManager.set(StartScene.init());
+  },
+
+  render(ctx) {
+    if (this.bg) this.bg.draw(ctx);
+    ctx.save();
+    ctx.fillStyle = 'rgba(0,0,0,0.78)'; ctx.fillRect(0, 0, CW, CH);
+    const fade = clamp(this.t * 1.5, 0, 1);
+    ctx.globalAlpha = fade;
+    ctx.fillStyle = '#00ff88'; ctx.font = 'bold 80px "Courier New"'; ctx.textAlign = 'center';
+    ctx.shadowColor = '#00ff88'; ctx.shadowBlur = 35;
+    ctx.fillText('VICTORY', CW / 2, 138);
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = '#aaccdd'; ctx.font = '20px "Courier New"';
+    ctx.fillText('MOTHERSHIP DESTROYED', CW / 2, 192);
+    ctx.fillStyle = '#00ddff'; ctx.font = 'bold 26px "Courier New"';
+    ctx.fillText('FINAL SCORE   ' + String(GameScene.score).padStart(8, '0'), CW / 2, 252);
+
+    const lines = [
+      '', 'VOID ASSAULT', '',
+      'Design & Code', 'Built with Claude Code', '',
+      'Art Assets', 'CC0 / Commercial License Packs', '',
+      'Sound', 'Web Audio API Synthesis', '',
+      'Thank you for playing!',
+    ];
+    ctx.fillStyle = '#889aaa'; ctx.font = '15px "Courier New"';
+    lines.forEach((line, i) => ctx.fillText(line, CW / 2, 310 + i * 26));
+
+    if (this.t > 2) {
+      ctx.fillStyle = '#667788'; ctx.font = '14px "Courier New"';
+      ctx.fillText('PRESS SPACE TO RETURN TO TITLE', CW / 2, CH - 28);
+    }
+    ctx.restore(); ctx.textAlign = 'left'; ctx.shadowBlur = 0;
   },
 };
 

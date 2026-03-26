@@ -61,5 +61,67 @@ const Audio = {
   levelClear() {
     [523, 659, 784, 1047].forEach((f, i) =>
       setTimeout(() => Audio._osc(f, f, 0.3, 'sine', 0.3), i * 180));
-  }
+  },
+
+  _musicGain: null,
+  _musicBeat: 0,
+  _musicNotes: [],
+  _musicStepTime: 0.125,
+  _musicSched: 0,
+  _musicTimer: null,
+
+  startMusic(level) {
+    if (!Audio.ctx) return;
+    Audio._resume();
+    Audio.stopMusic();
+    const seqs = {
+      1: [130.8,0,196,0,261.6,0,196,0, 164.8,0,220,0,164.8,0,130.8,0],
+      2: [110,0,164.8,0,220,0,164.8,0, 130.8,0,196,0,130.8,0,110,0],
+      3: [87.3,0,130.8,0,174.6,0,130.8,0, 116.5,0,155.6,0,116.5,0,87.3,0],
+      4: [73.4,0,110,0,146.8,0,110,0, 98,0,130.8,0,98,0,73.4,0],
+    };
+    Audio._musicNotes = seqs[level] || seqs[1];
+    Audio._musicBeat = 0;
+    Audio._musicSched = Audio.ctx.currentTime + 0.1;
+    Audio._musicGain = Audio.ctx.createGain();
+    Audio._musicGain.gain.value = 0.055;
+    Audio._musicGain.connect(Audio.ctx.destination);
+    Audio._musicTick();
+  },
+
+  _musicTick() {
+    if (!Audio._musicGain || !Audio.ctx) return;
+    while (Audio._musicSched < Audio.ctx.currentTime + 2.5) {
+      const freq = Audio._musicNotes[Audio._musicBeat % Audio._musicNotes.length];
+      if (freq > 0) {
+        const osc = Audio.ctx.createOscillator();
+        osc.type = 'sawtooth';
+        osc.frequency.value = freq;
+        const env = Audio.ctx.createGain();
+        env.gain.setValueAtTime(0.001, Audio._musicSched);
+        env.gain.linearRampToValueAtTime(1, Audio._musicSched + 0.02);
+        env.gain.exponentialRampToValueAtTime(0.001, Audio._musicSched + Audio._musicStepTime * 0.75);
+        osc.connect(env);
+        env.connect(Audio._musicGain);
+        osc.start(Audio._musicSched);
+        osc.stop(Audio._musicSched + Audio._musicStepTime);
+      }
+      Audio._musicBeat++;
+      Audio._musicSched += Audio._musicStepTime;
+    }
+    Audio._musicTimer = setTimeout(() => Audio._musicTick(), 800);
+  },
+
+  stopMusic() {
+    if (Audio._musicTimer !== null) { clearTimeout(Audio._musicTimer); Audio._musicTimer = null; }
+    if (Audio._musicGain) {
+      const g = Audio._musicGain;
+      Audio._musicGain = null;
+      try {
+        g.gain.setValueAtTime(g.gain.value, Audio.ctx.currentTime);
+        g.gain.exponentialRampToValueAtTime(0.001, Audio.ctx.currentTime + 0.3);
+      } catch(e) {}
+      setTimeout(() => { try { g.disconnect(); } catch(e) {} }, 400);
+    }
+  },
 };
