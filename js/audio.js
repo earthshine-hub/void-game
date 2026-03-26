@@ -7,6 +7,17 @@ const Audio = {
     try {
       Audio.ctx = new (window.AudioContext || window.webkitAudioContext)();
     } catch (e) { /* no audio */ }
+    // Safari requires ctx.resume() be called synchronously inside a user gesture.
+    // Register it once on the first interaction so all subsequent audio works.
+    const unlock = () => {
+      if (Audio.ctx && Audio.ctx.state === 'suspended') Audio.ctx.resume();
+      window.removeEventListener('keydown',     unlock);
+      window.removeEventListener('mousedown',   unlock);
+      window.removeEventListener('touchstart',  unlock);
+    };
+    window.addEventListener('keydown',    unlock);
+    window.addEventListener('mousedown',  unlock);
+    window.addEventListener('touchstart', unlock);
   },
 
   _resume() {
@@ -72,6 +83,7 @@ const Audio = {
 
   startMusic(level) {
     if (!Audio.ctx) return;
+    Audio._resume();
     Audio.stopMusic();
     const seqs = {
       1: [130.8,0,196,0,261.6,0,196,0, 164.8,0,220,0,164.8,0,130.8,0],
@@ -81,19 +93,11 @@ const Audio = {
     };
     Audio._musicNotes = seqs[level] || seqs[1];
     Audio._musicBeat = 0;
+    Audio._musicSched = Audio.ctx.currentTime + 0.05;
     Audio._musicGain = Audio.ctx.createGain();
     Audio._musicGain.gain.value = 0.1;
     Audio._musicGain.connect(Audio.ctx.destination);
-    // Wait for context to be running before scheduling, so currentTime is accurate
-    const startTick = () => {
-      Audio._musicSched = Audio.ctx.currentTime + 0.05;
-      Audio._musicTick();
-    };
-    if (Audio.ctx.state === 'suspended') {
-      Audio.ctx.resume().then(startTick).catch(startTick);
-    } else {
-      startTick();
-    }
+    Audio._musicTick();
   },
 
   _musicTick() {

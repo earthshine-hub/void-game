@@ -1,6 +1,6 @@
 'use strict';
 
-const MILESTONE = 3, BUILD = 0;
+const MILESTONE = 3, BUILD = 2;
 const VERSION_STR = 'MILESTONE ' + MILESTONE + '.' + BUILD;
 
 // ─── BACKGROUND ───────────────────────────────────────────────────────────────
