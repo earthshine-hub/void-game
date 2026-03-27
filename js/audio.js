@@ -4,16 +4,19 @@ const Audio = {
   ctx: null,
 
   init() {
-    try {
-      Audio.ctx = new (window.AudioContext || window.webkitAudioContext)();
-    } catch (e) { /* no audio */ }
-    // Safari requires ctx.resume() be called synchronously inside a user gesture.
-    // Register it once on the first interaction so all subsequent audio works.
+    // Do NOT create AudioContext here — Safari 16+ throws NotAllowedError if
+    // constructed without a prior user gesture, and the try/catch silences it,
+    // leaving ctx null for the entire session. Create it lazily instead.
     const unlock = () => {
-      if (Audio.ctx && Audio.ctx.state === 'suspended') Audio.ctx.resume();
-      window.removeEventListener('keydown',     unlock);
-      window.removeEventListener('mousedown',   unlock);
-      window.removeEventListener('touchstart',  unlock);
+      if (!Audio.ctx) {
+        try {
+          Audio.ctx = new (window.AudioContext || window.webkitAudioContext)();
+        } catch(e) { return; }
+      }
+      if (Audio.ctx.state === 'suspended') Audio.ctx.resume();
+      window.removeEventListener('keydown',    unlock);
+      window.removeEventListener('mousedown',  unlock);
+      window.removeEventListener('touchstart', unlock);
     };
     window.addEventListener('keydown',    unlock);
     window.addEventListener('mousedown',  unlock);
